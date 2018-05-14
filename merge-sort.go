@@ -1,102 +1,124 @@
 package main
 
 import (
-	"errors"
 	"fmt"
+	"math"
 	"math/rand"
 	"os"
 	"strconv"
-	"time"
+	"unsafe"
 )
 
 const (
-	MaxInt8   = 1<<7 - 1
-	MinInt8   = -1 << 7
-	MaxInt16  = 1<<15 - 1
-	MinInt16  = -1 << 15
-	MaxInt32  = 1<<31 - 1
-	MinInt32  = -1 << 31
-	MaxInt64  = 1<<63 - 1
-	MinInt64  = -1 << 63
-	MaxUint8  = 1<<8 - 1
-	MaxUint16 = 1<<16 - 1
-	MaxUint32 = 1<<32 - 1
-	MaxUint64 = 1<<64 - 1
+	multiWorker = iota
+	singleLayer
+	singleWorker
 )
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Println(errors.New("Input the number of arrays you want to merge"))
+	if len(os.Args) < 3 {
+		fmt.Println("Insufficient arguments, please enter `merge-sort.exe <number of arrays> <length of arrays> <sort-mode> (optional)`\n<sort-mode> can be single-layer, single-worker, or multi-worker")
 		return
 	}
+
+	minVal := 0
+	maxVal := 1
+	testVal := 0
+	intSize := unsafe.Sizeof(testVal)
+	if intSize == 8 {
+		minVal = math.MinInt64
+		maxVal = math.MaxInt64
+	} else if intSize == 4 {
+		minVal = math.MinInt32
+		maxVal = math.MaxInt32
+	} else {
+		fmt.Printf("panic, unexpected OS instruction size %d\n", intSize*8)
+		return
+	}
+
+	fmt.Println(minVal)
+	fmt.Println(maxVal)
+
 	numSlices, err := strconv.Atoi(os.Args[1])
-	if err != nil {
-		fmt.Println(errors.New("Please input a valid integer in the command line"))
-		return
+	if err != nil || numSlices < 0 {
+		fmt.Printf("Invalid number of arrays, you inputted %s\n", os.Args[2])
 	}
-	startPrep := time.Now()
-	mySlices := make([][]int, numSlices) //{{1, 2, 3, 7}, {4, 5, 6, 9}, {7, 8, 9}, {}}
-	// this might be horribly slow
-	totalVals := 0
-	for n := 0; n < numSlices; n++ {
-		newSlice := make([]int, 0)
-		for i := rand.Intn(MaxInt16); i < MaxInt16; i += (rand.Intn(MaxInt16) / 4096) {
-			newSlice = append(newSlice, i)
-			totalVals += 1
-		}
-		mySlices[n] = newSlice
+
+	sliceLength, err := strconv.Atoi(os.Args[2])
+	if err != nil || sliceLength < 0 {
+		fmt.Printf("Invalid length of arrays, you inputted %s\n", os.Args[3])
 	}
-	endPrep := time.Now()
-	prepTime := int(endPrep.Sub(startPrep) / time.Millisecond)
-	fmt.Printf("Generated input arrays in %v milliseconds\n", prepTime)
-	//fmt.Println(mySlices)
-	routines := 0
-	slices := make(chan []int, 16)
-	start := time.Now()
-	for true {
-		if routines == 0 && len(mySlices) == 1 {
-			break
+
+	sortMode := 0
+	if len(os.Args) > 3 {
+		switch sortModeString := os.Args[3]; sortModeString {
+		case "multi-worker":
+			sortMode = multiWorker
+		case "single-layer":
+			sortMode = singleLayer
+		case "single-worker":
+			sortMode = singleWorker
+		default:
+			fmt.Printf("Unknown sort option selected %s, defaulting to multi-worker\n", sortModeString)
+			sortMode = multiWorker
 		}
-		for len(mySlices) > 1 {
-			go mergeSort(mySlices[0:2], slices)
-			routines += 1
-			mySlices = mySlices[2:]
-		}
-		nextSlice := <-slices
-		routines -= 1
-		mySlices = append(mySlices, nextSlice)
+	} else {
+		fmt.Println("No sort method chosen, multi-worker will be used as the default.")
+		sortMode = multiWorker
 	}
-	end := time.Now()
-	timeElapsed := int(end.Sub(start) / time.Millisecond)
-	avgLength := totalVals / numSlices
-	fmt.Printf("Sorted %d arrays with an average length of %d in %v milliseconds.\n", numSlices, avgLength, timeElapsed)
+
+	avgInterval := 2 * (maxVal / sliceLength)
+
+	myValues := make([][]int, numSlices)
+	for i := 0; i < numSlices; i++ {
+		myValues[i] = make([]int, sliceLength)
+		curVal := minVal + rand.Intn(avgInterval)/2 // just to help be sure we're not always going over
+		for j := 0; j < sliceLength; j++ {
+			if curVal > maxVal {
+				curVal = maxVal
+			}
+			myValues[i][j] = curVal
+			curVal += rand.Intn(avgInterval)
+		}
+	}
+	fmt.Println(myValues)
+	finalOut := make([]int, 0)
+	switch sortMode {
+	case multiWorker:
+
+	case singleLayer:
+		finalOut = mergeSort(myValues, maxVal)
+	case singleWorker:
+
+	}
+	fmt.Println(finalOut)
 	return
 }
 
-func mergeSort(input [][]int, out chan []int) {
+func mergeSort(input [][]int, maxVal int) []int {
 	finalLength := 0
 	for i := 0; i < len(input); i++ {
 		finalLength += len(input[i])
 	}
 	output := make([]int, finalLength)
 
-	lowestVal := MaxInt32
-	bookmark := 0
+	bookmark := -1
 	for i := 0; i < finalLength; i++ {
 		for j := 0; j < len(input); j++ {
 			if len(input[j]) == 0 {
 				continue
 			}
-			if lowestVal > input[j][0] {
-				lowestVal = input[j][0]
+			if maxVal > input[j][0] {
+				maxVal = input[j][0]
 				bookmark = j
 			}
 		}
-		output[i] = lowestVal
+		output[i] = maxVal
+		fmt.Printf("%d is the maxVal, %d is the bookmark", maxVal, bookmark)
+		fmt.Println(input[bookmark])
 		input[bookmark] = input[bookmark][1:]
-		lowestVal = MaxInt32
+		maxVal = int(math.Inf(1))
 	}
 
-	//fmt.Printf("the output is %v\n", output)
-	out <- output
+	return output
 }
